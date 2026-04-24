@@ -15,7 +15,12 @@ import type {
   ClaudeQuotaState,
   ClaudeQuotaWindow,
   ClaudeUsagePayload,
+  CodexEstimatorAccountDetailPayload,
+  CodexEstimatorCurrentCycleEstimate,
+  CodexEstimatorExhaustionEvent,
   CodexRateLimitInfo,
+  CodexQuotaEstimatorState,
+  CodexQuotaEstimatorWindow,
   CodexQuotaState,
   CodexUsageWindow,
   CodexQuotaWindow,
@@ -29,7 +34,12 @@ import type {
   KimiQuotaRow,
   KimiQuotaState,
 } from '@/types';
-import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
+import {
+  apiCallApi,
+  authFilesApi,
+  getApiCallErrorMessage,
+  quotaEstimatorApi,
+} from '@/services/api';
 import { useQuotaStore } from '@/stores';
 import {
   ANTIGRAVITY_QUOTA_URLS,
@@ -398,10 +408,190 @@ const buildCodexQuotaWindows = (payload: CodexUsagePayload, t: TFunction): Codex
   return windows;
 };
 
+const normalizeBooleanLike = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+  return false;
+};
+
+const normalizeCodexEstimatorTokenTotal = (
+  summary: Record<string, unknown> | null | undefined
+): number | null => {
+  if (!summary) return null;
+
+  const total =
+    normalizeNumberValue(summary.total_tokens ?? summary.totalTokens);
+  if (total !== null) {
+    return Math.max(0, Math.round(total));
+  }
+
+  const read =
+    normalizeNumberValue(summary.read_tokens ?? summary.readTokens) ?? 0;
+  const cache =
+    normalizeNumberValue(summary.cache_read_tokens ?? summary.cacheReadTokens) ?? 0;
+  const output =
+    normalizeNumberValue(summary.output_tokens ?? summary.outputTokens) ?? 0;
+  const reasoning =
+    normalizeNumberValue(summary.reasoning_tokens ?? summary.reasoningTokens) ?? 0;
+
+  const inferred = read + cache + output + reasoning;
+  return inferred > 0 ? Math.round(inferred) : null;
+};
+
+const resolveCodexEstimatorWindowLabel = (windowType: string, t: TFunction): string => {
+  const normalized = windowType.trim().toLowerCase();
+  if (normalized === '5h') return t('codex_quota.primary_window');
+  if (normalized === '7d') return t('codex_quota.secondary_window');
+  return windowType || t('codex_quota.estimator_unknown_window');
+};
+
+const normalizeCodexEstimatorExhaustion = (
+  value: CodexEstimatorExhaustionEvent | null | undefined
+): CodexEstimatorExhaustionEvent | null => {
+  if (!value || typeof value !== 'object') return null;
+
+  const observedAt = normalizeStringValue(value.observed_at ?? value.observedAt) ?? undefined;
+  const model = normalizeStringValue(value.model) ?? undefined;
+  const retryAfterSeconds =
+    normalizeNumberValue(value.retry_after_seconds ?? value.retryAfterSeconds) ?? undefined;
+  const retryAfterDeadline =
+    normalizeStringValue(value.retry_after_deadline ?? value.retryAfterDeadline) ?? undefined;
+
+  if (!observedAt && !model && retryAfterSeconds === undefined && !retryAfterDeadline) {
+    return null;
+  }
+
+  return {
+    observedAt,
+    model,
+    retryAfterSeconds,
+    retryAfterDeadline,
+  };
+};
+
+const normalizeCodexEstimatorWindow = (
+  value: CodexEstimatorCurrentCycleEstimate,
+  t: TFunction
+): CodexQuotaEstimatorWindow | null => {
+  const windowType = normalizeStringValue(value.window_type ?? value.windowType);
+  const usedPercentRaw = normalizeNumberValue(
+    value.current_used_percent ?? value.currentUsedPercent
+  );
+  const usedPercent =
+    usedPercentRaw === null ? null : Math.max(0, Math.min(100, usedPercentRaw));
+  const remainingPercent =
+    usedPercent === null ? null : Math.max(0, Math.min(100, 100 - usedPercent));
+
+  const currentTokens = normalizeCodexEstimatorTokenTotal(
+    (value.current_tokens ?? value.currentTokens ?? null) as Record<string, unknown> | null
+  );
+  const estimatedCapacity = normalizeCodexEstimatorTokenTotal(
+    (value.estimated_capacity ?? value.estimatedCapacity ?? null) as Record<string, unknown> | null
+  );
+  const sampleCount = Math.max(
+    0,
+    Math.round(normalizeNumberValue(value.sample_count ?? value.sampleCount) ?? 0)
+  );
+  const confidence = normalizeStringValue(value.confidence)?.toLowerCase() ?? null;
+  const currentCycleStartedAt =
+    normalizeStringValue(value.current_cycle_started_at ?? value.currentCycleStartedAt) ?? undefined;
+  const lastRefreshAt =
+    normalizeStringValue(value.last_refresh_at ?? value.lastRefreshAt) ?? undefined;
+  const lastExhaustionAt =
+    normalizeStringValue(value.last_exhaustion_at ?? value.lastExhaustionAt) ?? undefined;
+  const id =
+    windowType ??
+    currentCycleStartedAt ??
+    lastRefreshAt ??
+    lastExhaustionAt ??
+    'codex-estimator-window';
+  const exhaustedPending = normalizeBooleanLike(
+    value.exhausted_pending ?? value.exhaustedPending
+  );
+  const exhaustedConfirmed = normalizeBooleanLike(
+    value.exhausted_confirmed ?? value.exhaustedConfirmed
+  );
+
+  if (
+    remainingPercent === null &&
+    currentTokens === null &&
+    estimatedCapacity === null &&
+    sampleCount === 0 &&
+    !currentCycleStartedAt &&
+    !lastRefreshAt &&
+    !lastExhaustionAt &&
+    !exhaustedPending &&
+    !exhaustedConfirmed
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    label: resolveCodexEstimatorWindowLabel(windowType ?? '', t),
+    remainingPercent,
+    currentTokensTotal: currentTokens,
+    estimatedCapacityTotal: estimatedCapacity,
+    sampleCount,
+    confidence,
+    currentCycleStartedAt,
+    lastRefreshAt,
+    lastExhaustionAt,
+    exhaustedPending,
+    exhaustedConfirmed,
+  };
+};
+
+const normalizeCodexEstimatorState = (
+  payload: CodexEstimatorAccountDetailPayload | null | undefined,
+  planTypeFallback: string | null,
+  t: TFunction
+): CodexQuotaEstimatorState | null => {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const rawWindows = Array.isArray(payload.windows) ? payload.windows : [];
+  const windows = rawWindows.reduce<CodexQuotaEstimatorWindow[]>((result, item) => {
+    const normalized = normalizeCodexEstimatorWindow(item, t);
+    if (normalized) {
+      result.push(normalized);
+    }
+    return result;
+  }, []);
+
+  const lastQuotaRefreshAt =
+    normalizeStringValue(payload.last_quota_refresh_at ?? payload.lastQuotaRefreshAt) ?? undefined;
+  const lastObservationAt =
+    normalizeStringValue(payload.last_observation_at ?? payload.lastObservationAt) ?? undefined;
+  const lastExhaustion = normalizeCodexEstimatorExhaustion(
+    payload.last_exhaustion_event ?? payload.lastExhaustionEvent ?? null
+  );
+  const planType =
+    normalizePlanType(payload.plan_type ?? payload.planType) ?? planTypeFallback;
+
+  if (windows.length === 0 && !lastQuotaRefreshAt && !lastObservationAt && !lastExhaustion) {
+    return null;
+  }
+
+  return {
+    planType,
+    lastQuotaRefreshAt,
+    lastObservationAt,
+    lastExhaustion,
+    windows,
+  };
+};
+
 const fetchCodexQuota = async (
   file: AuthFileItem,
   t: TFunction
-): Promise<{ planType: string | null; windows: CodexQuotaWindow[] }> => {
+): Promise<{
+  planType: string | null;
+  windows: CodexQuotaWindow[];
+  estimator: CodexQuotaEstimatorState | null;
+}> => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
   const authIndex = normalizeAuthIndex(rawAuthIndex);
   if (!authIndex) {
@@ -410,34 +600,64 @@ const fetchCodexQuota = async (
 
   const planTypeFromFile = resolveCodexPlanType(file);
   const accountId = resolveCodexChatgptAccountId(file);
-  if (!accountId) {
-    throw new Error(t('codex_quota.missing_account_id'));
+  let usageError: unknown = null;
+  let planTypeFromUsage: string | null = null;
+  let windows: CodexQuotaWindow[] = [];
+
+  if (accountId) {
+    try {
+      const requestHeader: Record<string, string> = {
+        ...CODEX_REQUEST_HEADERS,
+        'Chatgpt-Account-Id': accountId,
+      };
+
+      const result = await apiCallApi.request({
+        authIndex,
+        method: 'GET',
+        url: CODEX_USAGE_URL,
+        header: requestHeader,
+      });
+
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+      }
+
+      const payload = parseCodexUsagePayload(result.body ?? result.bodyText);
+      if (!payload) {
+        throw new Error(t('codex_quota.empty_windows'));
+      }
+
+      planTypeFromUsage = normalizePlanType(payload.plan_type ?? payload.planType);
+      windows = buildCodexQuotaWindows(payload, t);
+    } catch (err: unknown) {
+      usageError = err;
+    }
+  } else {
+    usageError = new Error(t('codex_quota.missing_account_id'));
   }
 
-  const requestHeader: Record<string, string> = {
-    ...CODEX_REQUEST_HEADERS,
-    'Chatgpt-Account-Id': accountId,
-  };
-
-  const result = await apiCallApi.request({
-    authIndex,
-    method: 'GET',
-    url: CODEX_USAGE_URL,
-    header: requestHeader,
-  });
-
-  if (result.statusCode < 200 || result.statusCode >= 300) {
-    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+  let estimator: CodexQuotaEstimatorState | null = null;
+  try {
+    const detail = await quotaEstimatorApi.getCodexDetail(authIndex);
+    estimator = normalizeCodexEstimatorState(
+      detail,
+      planTypeFromUsage ?? planTypeFromFile,
+      t
+    );
+  } catch {
+    estimator = null;
   }
 
-  const payload = parseCodexUsagePayload(result.body ?? result.bodyText);
-  if (!payload) {
-    throw new Error(t('codex_quota.empty_windows'));
+  const planType = planTypeFromUsage ?? estimator?.planType ?? planTypeFromFile;
+  if (windows.length > 0 || estimator) {
+    return { planType, windows, estimator };
   }
 
-  const planTypeFromUsage = normalizePlanType(payload.plan_type ?? payload.planType);
-  const windows = buildCodexQuotaWindows(payload, t);
-  return { planType: planTypeFromUsage ?? planTypeFromFile, windows };
+  if (usageError) {
+    throw usageError;
+  }
+
+  throw new Error(t('codex_quota.empty_windows'));
 };
 
 const GEMINI_CLI_G1_CREDIT_TYPE = 'GOOGLE_ONE_AI';
@@ -735,6 +955,261 @@ const renderAntigravityItems = (
 const PREMIUM_GEMINI_CLI_TIER_IDS = new Set(['g1-ultra-tier']);
 const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
 
+const formatCodexEstimatorTime = (value?: string): string => {
+  if (!value) return '-';
+  return formatQuotaResetTime(value);
+};
+
+const formatCodexEstimatorTokens = (
+  currentTokensTotal: number | null,
+  estimatedCapacityTotal: number | null,
+  t: TFunction
+): string => {
+  if (currentTokensTotal === null) {
+    return t('codex_quota.estimator_tokens_unknown');
+  }
+
+  const currentLabel = currentTokensTotal.toLocaleString();
+  if (estimatedCapacityTotal !== null && estimatedCapacityTotal > 0) {
+    return t('codex_quota.estimator_tokens_with_capacity', {
+      current: currentLabel,
+      capacity: estimatedCapacityTotal.toLocaleString(),
+    });
+  }
+
+  return t('codex_quota.estimator_tokens_current', {
+    current: currentLabel,
+  });
+};
+
+const resolveCodexEstimatorConfidenceLabel = (
+  confidence: string | null | undefined,
+  t: TFunction
+): string | null => {
+  const normalized = confidence?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'high') return t('codex_quota.estimator_confidence_high');
+  if (normalized === 'medium') return t('codex_quota.estimator_confidence_medium');
+  if (normalized === 'low') return t('codex_quota.estimator_confidence_low');
+  return normalized;
+};
+
+const resolveCodexEstimatorConfidenceClass = (
+  confidence: string | null | undefined,
+  styleMap: typeof styles
+): string => {
+  const normalized = confidence?.trim().toLowerCase();
+  if (normalized === 'high') return styleMap.codexEstimatorPillHigh;
+  if (normalized === 'medium') return styleMap.codexEstimatorPillMedium;
+  return styleMap.codexEstimatorPillLow;
+};
+
+const renderCodexEstimatorSection = (
+  estimator: CodexQuotaEstimatorState,
+  t: TFunction,
+  helpers: QuotaRenderHelpers
+): ReactNode => {
+  const { styles: styleMap, QuotaProgressBar } = helpers;
+  const { createElement: h, Fragment } = React;
+  const overviewItems: string[] = [];
+
+  if (estimator.lastQuotaRefreshAt) {
+    overviewItems.push(
+      t('codex_quota.estimator_last_refresh', {
+        time: formatCodexEstimatorTime(estimator.lastQuotaRefreshAt),
+      })
+    );
+  }
+  if (estimator.lastObservationAt) {
+    overviewItems.push(
+      t('codex_quota.estimator_last_observation', {
+        time: formatCodexEstimatorTime(estimator.lastObservationAt),
+      })
+    );
+  }
+  if (estimator.lastExhaustion?.observedAt) {
+    overviewItems.push(
+      t('codex_quota.estimator_last_exhaustion', {
+        time: formatCodexEstimatorTime(estimator.lastExhaustion.observedAt),
+      })
+    );
+  }
+  if (estimator.lastExhaustion?.retryAfterDeadline) {
+    overviewItems.push(
+      t('codex_quota.estimator_retry_after', {
+        time: formatCodexEstimatorTime(estimator.lastExhaustion.retryAfterDeadline),
+      })
+    );
+  }
+
+  const contentNodes: ReactNode[] =
+    estimator.windows.length > 0
+      ? estimator.windows.map((window) => {
+          const remainingLabel =
+            window.remainingPercent === null
+              ? t('codex_quota.estimator_remaining_unknown')
+              : t('codex_quota.estimator_remaining', {
+                  percent: `${Math.round(window.remainingPercent)}%`,
+                });
+          const tokenLabel = formatCodexEstimatorTokens(
+            window.currentTokensTotal,
+            window.estimatedCapacityTotal,
+            t
+          );
+          const confidenceLabel = resolveCodexEstimatorConfidenceLabel(window.confidence, t);
+          const metaItems: string[] = [];
+
+          if (window.currentCycleStartedAt) {
+            metaItems.push(
+              t('codex_quota.estimator_started_at', {
+                time: formatCodexEstimatorTime(window.currentCycleStartedAt),
+              })
+            );
+          }
+          if (window.lastRefreshAt) {
+            metaItems.push(
+              t('codex_quota.estimator_window_refresh', {
+                time: formatCodexEstimatorTime(window.lastRefreshAt),
+              })
+            );
+          }
+          if (!window.lastRefreshAt && window.lastExhaustionAt) {
+            metaItems.push(
+              t('codex_quota.estimator_window_exhaustion', {
+                time: formatCodexEstimatorTime(window.lastExhaustionAt),
+              })
+            );
+          }
+
+          const pillNodes: ReactNode[] = [];
+          if (confidenceLabel) {
+            pillNodes.push(
+              h(
+                'span',
+                {
+                  key: `${window.id}-confidence`,
+                  className: `${styleMap.codexEstimatorPill} ${resolveCodexEstimatorConfidenceClass(window.confidence, styleMap)}`,
+                },
+                confidenceLabel
+              )
+            );
+          }
+          if (window.sampleCount > 0) {
+            pillNodes.push(
+              h(
+                'span',
+                {
+                  key: `${window.id}-samples`,
+                  className: `${styleMap.codexEstimatorPill} ${styleMap.codexEstimatorPillNeutral}`,
+                },
+                t('codex_quota.estimator_samples', { count: window.sampleCount })
+              )
+            );
+          }
+          if (window.exhaustedConfirmed) {
+            pillNodes.push(
+              h(
+                'span',
+                {
+                  key: `${window.id}-exhausted-confirmed`,
+                  className: `${styleMap.codexEstimatorPill} ${styleMap.codexEstimatorPillConfirmed}`,
+                },
+                t('codex_quota.estimator_exhausted_confirmed')
+              )
+            );
+          } else if (window.exhaustedPending) {
+            pillNodes.push(
+              h(
+                'span',
+                {
+                  key: `${window.id}-exhausted-pending`,
+                  className: `${styleMap.codexEstimatorPill} ${styleMap.codexEstimatorPillPending}`,
+                },
+                t('codex_quota.estimator_exhausted_pending')
+              )
+            );
+          }
+
+          return h(
+            'div',
+            { key: window.id, className: styleMap.quotaRow },
+            h(
+              'div',
+              { className: styleMap.quotaRowHeader },
+              h('span', { className: styleMap.quotaModel }, window.label),
+              pillNodes.length > 0
+                ? h('div', { className: styleMap.codexEstimatorPills }, ...pillNodes)
+                : null
+            ),
+            h(
+              'div',
+              { className: styleMap.quotaMeta },
+              h('span', { className: styleMap.quotaPercent }, remainingLabel),
+              h('span', { className: styleMap.quotaAmount }, tokenLabel)
+            ),
+            h(QuotaProgressBar, {
+              percent: window.remainingPercent,
+              highThreshold: QUOTA_PROGRESS_HIGH_THRESHOLD,
+              mediumThreshold: QUOTA_PROGRESS_MEDIUM_THRESHOLD,
+            }),
+            metaItems.length > 0
+              ? h(
+                  'div',
+                  { className: styleMap.codexEstimatorMetaLine },
+                  ...metaItems.map((item, index) =>
+                    h(
+                      'span',
+                      {
+                        key: `${window.id}-meta-${index}`,
+                        className: styleMap.codexEstimatorMetaItem,
+                      },
+                      item
+                    )
+                  )
+                )
+              : null
+          );
+        })
+      : [
+          h(
+            'div',
+            { key: 'estimator-empty', className: styleMap.quotaMessage },
+            t('codex_quota.estimator_empty')
+          ),
+        ];
+
+  return h(
+    Fragment,
+    null,
+    h(
+      'div',
+      { key: 'estimator', className: styleMap.codexEstimatorSection },
+      h(
+        'div',
+        { className: styleMap.codexEstimatorSectionHeader },
+        h('span', { className: styleMap.codexEstimatorSectionLabel }, t('codex_quota.estimator_title')),
+        overviewItems.length > 0
+          ? h(
+              'div',
+              { className: styleMap.codexEstimatorMetaLine },
+              ...overviewItems.map((item, index) =>
+                h(
+                  'span',
+                  {
+                    key: `overview-${index}`,
+                    className: styleMap.codexEstimatorMetaItem,
+                  },
+                  item
+                )
+              )
+            )
+          : null
+      ),
+      ...contentNodes
+    )
+  );
+};
+
 const renderCodexItems = (
   quota: CodexQuotaState,
   t: TFunction,
@@ -743,7 +1218,8 @@ const renderCodexItems = (
   const { styles: styleMap, QuotaProgressBar } = helpers;
   const { createElement: h, Fragment } = React;
   const windows = quota.windows ?? [];
-  const planType = quota.planType ?? null;
+  const estimator = quota.estimator ?? null;
+  const planType = quota.planType ?? estimator?.planType ?? null;
 
   const getPlanLabel = (pt?: string | null): string | null => {
     const normalized = normalizePlanType(pt);
@@ -774,45 +1250,52 @@ const renderCodexItems = (
     );
   }
 
-  if (windows.length === 0) {
+  if (windows.length === 0 && !estimator) {
     nodes.push(
       h('div', { key: 'empty', className: styleMap.quotaMessage }, t('codex_quota.empty_windows'))
     );
     return h(Fragment, null, ...nodes);
   }
 
-  nodes.push(
-    ...windows.map((window) => {
-      const used = window.usedPercent;
-      const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
-      const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
-      const windowLabel = window.labelKey
-        ? t(window.labelKey, window.labelParams as Record<string, string | number>)
-        : window.label;
+  if (windows.length > 0) {
+    nodes.push(
+      ...windows.map((window) => {
+        const used = window.usedPercent;
+        const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
+        const remaining =
+          clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
+        const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
+        const windowLabel = window.labelKey
+          ? t(window.labelKey, window.labelParams as Record<string, string | number>)
+          : window.label;
 
-      return h(
-        'div',
-        { key: window.id, className: styleMap.quotaRow },
-        h(
+        return h(
           'div',
-          { className: styleMap.quotaRowHeader },
-          h('span', { className: styleMap.quotaModel }, windowLabel),
+          { key: window.id, className: styleMap.quotaRow },
           h(
             'div',
-            { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
-            h('span', { className: styleMap.quotaReset }, window.resetLabel)
-          )
-        ),
-        h(QuotaProgressBar, {
-          percent: remaining,
-          highThreshold: QUOTA_PROGRESS_HIGH_THRESHOLD,
-          mediumThreshold: QUOTA_PROGRESS_MEDIUM_THRESHOLD,
-        })
-      );
-    })
-  );
+            { className: styleMap.quotaRowHeader },
+            h('span', { className: styleMap.quotaModel }, windowLabel),
+            h(
+              'div',
+              { className: styleMap.quotaMeta },
+              h('span', { className: styleMap.quotaPercent }, percentLabel),
+              h('span', { className: styleMap.quotaReset }, window.resetLabel)
+            )
+          ),
+          h(QuotaProgressBar, {
+            percent: remaining,
+            highThreshold: QUOTA_PROGRESS_HIGH_THRESHOLD,
+            mediumThreshold: QUOTA_PROGRESS_MEDIUM_THRESHOLD,
+          })
+        );
+      })
+    );
+  }
+
+  if (estimator) {
+    nodes.push(renderCodexEstimatorSection(estimator, t, helpers));
+  }
 
   return h(Fragment, null, ...nodes);
 };
@@ -1171,7 +1654,11 @@ export const ANTIGRAVITY_CONFIG: QuotaConfig<AntigravityQuotaState, AntigravityQ
 
 export const CODEX_CONFIG: QuotaConfig<
   CodexQuotaState,
-  { planType: string | null; windows: CodexQuotaWindow[] }
+  {
+    planType: string | null;
+    windows: CodexQuotaWindow[];
+    estimator: CodexQuotaEstimatorState | null;
+  }
 > = {
   type: 'codex',
   i18nPrefix: 'codex_quota',
@@ -1180,15 +1667,17 @@ export const CODEX_CONFIG: QuotaConfig<
   fetchQuota: fetchCodexQuota,
   storeSelector: (state) => state.codexQuota,
   storeSetter: 'setCodexQuota',
-  buildLoadingState: () => ({ status: 'loading', windows: [] }),
+  buildLoadingState: () => ({ status: 'loading', windows: [], estimator: null }),
   buildSuccessState: (data) => ({
     status: 'success',
     windows: data.windows,
     planType: data.planType,
+    estimator: data.estimator,
   }),
   buildErrorState: (message, status) => ({
     status: 'error',
     windows: [],
+    estimator: null,
     error: message,
     errorStatus: status,
   }),

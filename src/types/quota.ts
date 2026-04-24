@@ -242,8 +242,112 @@ export interface CodexQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   windows: CodexQuotaWindow[];
   planType?: string | null;
+  estimator?: CodexQuotaEstimatorState | null;
   error?: string;
   errorStatus?: number;
+}
+
+export interface CodexEstimatorTokenSummary {
+  read_tokens?: number | string;
+  readTokens?: number | string;
+  cache_read_tokens?: number | string;
+  cacheReadTokens?: number | string;
+  output_tokens?: number | string;
+  outputTokens?: number | string;
+  reasoning_tokens?: number | string;
+  reasoningTokens?: number | string;
+  total_tokens?: number | string;
+  totalTokens?: number | string;
+}
+
+export interface CodexEstimatorExhaustionEvent {
+  observed_at?: string;
+  observedAt?: string;
+  auth_id?: string;
+  authId?: string;
+  auth_index?: string;
+  authIndex?: string;
+  plan_type?: string;
+  planType?: string;
+  model?: string;
+  retry_after_seconds?: number | string;
+  retryAfterSeconds?: number | string;
+  retry_after_deadline?: string;
+  retryAfterDeadline?: string;
+}
+
+export interface CodexEstimatorCurrentCycleEstimate {
+  auth_id?: string;
+  authId?: string;
+  auth_index?: string;
+  authIndex?: string;
+  plan_type?: string;
+  planType?: string;
+  window_type?: string;
+  windowType?: string;
+  current_cycle_started_at?: string;
+  currentCycleStartedAt?: string;
+  cycle_start_source?: string;
+  cycleStartSource?: string;
+  last_refresh_at?: string;
+  lastRefreshAt?: string;
+  current_used_percent?: number | string;
+  currentUsedPercent?: number | string;
+  current_tokens?: CodexEstimatorTokenSummary | null;
+  currentTokens?: CodexEstimatorTokenSummary | null;
+  estimated_capacity?: CodexEstimatorTokenSummary | null;
+  estimatedCapacity?: CodexEstimatorTokenSummary | null;
+  sample_count?: number | string;
+  sampleCount?: number | string;
+  confidence?: string;
+  last_exhaustion_at?: string;
+  lastExhaustionAt?: string;
+  exhausted_pending?: boolean | string;
+  exhaustedPending?: boolean | string;
+  exhausted_confirmed?: boolean | string;
+  exhaustedConfirmed?: boolean | string;
+}
+
+export interface CodexEstimatorAccountDetailPayload {
+  auth_id?: string;
+  authId?: string;
+  auth_index?: string;
+  authIndex?: string;
+  account_type?: string;
+  accountType?: string;
+  account?: string;
+  plan_type?: string;
+  planType?: string;
+  last_quota_refresh_at?: string;
+  lastQuotaRefreshAt?: string;
+  last_observation_at?: string;
+  lastObservationAt?: string;
+  last_exhaustion_event?: CodexEstimatorExhaustionEvent | null;
+  lastExhaustionEvent?: CodexEstimatorExhaustionEvent | null;
+  windows?: CodexEstimatorCurrentCycleEstimate[];
+}
+
+export interface CodexQuotaEstimatorWindow {
+  id: string;
+  label: string;
+  remainingPercent: number | null;
+  currentTokensTotal: number | null;
+  estimatedCapacityTotal: number | null;
+  sampleCount: number;
+  confidence?: string | null;
+  currentCycleStartedAt?: string;
+  lastRefreshAt?: string;
+  lastExhaustionAt?: string;
+  exhaustedPending: boolean;
+  exhaustedConfirmed: boolean;
+}
+
+export interface CodexQuotaEstimatorState {
+  planType?: string | null;
+  lastQuotaRefreshAt?: string;
+  lastObservationAt?: string;
+  lastExhaustion?: CodexEstimatorExhaustionEvent | null;
+  windows: CodexQuotaEstimatorWindow[];
 }
 
 // Kimi API payload types
