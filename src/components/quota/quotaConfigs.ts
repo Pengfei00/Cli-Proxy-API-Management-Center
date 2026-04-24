@@ -60,6 +60,7 @@ import {
   normalizePlanType,
   normalizeQuotaFraction,
   normalizeStringValue,
+  normalizeTimestampValue,
   parseAntigravityPayload,
   parseClaudeUsagePayload,
   parseCodexUsagePayload,
@@ -453,12 +454,12 @@ const normalizeCodexEstimatorExhaustion = (
 ): CodexEstimatorExhaustionEvent | null => {
   if (!value || typeof value !== 'object') return null;
 
-  const observedAt = normalizeStringValue(value.observed_at ?? value.observedAt) ?? undefined;
+  const observedAt = normalizeTimestampValue(value.observed_at ?? value.observedAt) ?? undefined;
   const model = normalizeStringValue(value.model) ?? undefined;
   const retryAfterSeconds =
     normalizeNumberValue(value.retry_after_seconds ?? value.retryAfterSeconds) ?? undefined;
   const retryAfterDeadline =
-    normalizeStringValue(value.retry_after_deadline ?? value.retryAfterDeadline) ?? undefined;
+    normalizeTimestampValue(value.retry_after_deadline ?? value.retryAfterDeadline) ?? undefined;
 
   if (!observedAt && !model && retryAfterSeconds === undefined && !retryAfterDeadline) {
     return null;
@@ -497,11 +498,12 @@ const normalizeCodexEstimatorWindow = (
   );
   const confidence = normalizeStringValue(value.confidence)?.toLowerCase() ?? null;
   const currentCycleStartedAt =
-    normalizeStringValue(value.current_cycle_started_at ?? value.currentCycleStartedAt) ?? undefined;
+    normalizeTimestampValue(value.current_cycle_started_at ?? value.currentCycleStartedAt) ??
+    undefined;
   const lastRefreshAt =
-    normalizeStringValue(value.last_refresh_at ?? value.lastRefreshAt) ?? undefined;
+    normalizeTimestampValue(value.last_refresh_at ?? value.lastRefreshAt) ?? undefined;
   const lastExhaustionAt =
-    normalizeStringValue(value.last_exhaustion_at ?? value.lastExhaustionAt) ?? undefined;
+    normalizeTimestampValue(value.last_exhaustion_at ?? value.lastExhaustionAt) ?? undefined;
   const id =
     windowType ??
     currentCycleStartedAt ??
@@ -562,9 +564,10 @@ const normalizeCodexEstimatorState = (
   }, []);
 
   const lastQuotaRefreshAt =
-    normalizeStringValue(payload.last_quota_refresh_at ?? payload.lastQuotaRefreshAt) ?? undefined;
+    normalizeTimestampValue(payload.last_quota_refresh_at ?? payload.lastQuotaRefreshAt) ??
+    undefined;
   const lastObservationAt =
-    normalizeStringValue(payload.last_observation_at ?? payload.lastObservationAt) ?? undefined;
+    normalizeTimestampValue(payload.last_observation_at ?? payload.lastObservationAt) ?? undefined;
   const lastExhaustion = normalizeCodexEstimatorExhaustion(
     payload.last_exhaustion_event ?? payload.lastExhaustionEvent ?? null
   );

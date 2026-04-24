@@ -19,6 +19,16 @@ export function normalizeStringValue(value: unknown): string | null {
   return null;
 }
 
+export function normalizeTimestampValue(value: unknown): string | null {
+  const normalized = normalizeStringValue(value);
+  if (!normalized) return null;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) {
+    return null;
+  }
+  return normalized;
+}
+
 export function normalizeGeminiCliModelId(value: unknown): string | null {
   const modelId = normalizeStringValue(value);
   if (!modelId) return null;

@@ -9,7 +9,7 @@ import { normalizeNumberValue } from './parsers';
 export function formatQuotaResetTime(value?: string): string {
   if (!value) return '-';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) return '-';
   return date.toLocaleString(undefined, {
     month: '2-digit',
     day: '2-digit',
