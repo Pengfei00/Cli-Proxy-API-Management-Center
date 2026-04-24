@@ -693,7 +693,21 @@
     "estimator_last_exhaustion": "Last exhaustion {{time}}",
     "estimator_retry_after": "Retry around {{time}}",
     "estimator_exhausted_pending": "Pending refresh confirmation",
-    "estimator_exhausted_confirmed": "Exhaustion confirmed"
+    "estimator_exhausted_confirmed": "Exhaustion confirmed",
+    "estimator_calculation_formula": "Calculation Formula",
+    "estimator_current_cycle_used_amount": "Current Cycle Used Amount",
+    "estimator_current_cycle_used_percent": "Current Cycle Used Percent",
+    "estimator_full_amount_estimate": "100% Capacity Estimate",
+    "estimator_model_cost_formula": "Model Cost Formula",
+    "estimator_summary_formula": "Summary Formula",
+    "estimator_missing_price_models": "The following models have no configured price and were excluded from the estimate: {{models}}",
+    "estimator_no_billable_data": "No billable cost data available for this cycle yet",
+    "estimator_prompt_tokens_label": "PromptTokens",
+    "estimator_cache_tokens_label": "CacheTokens",
+    "estimator_completion_tokens_label": "CompletionTokens",
+    "estimator_prompt_price_label": "PromptPrice",
+    "estimator_cache_price_label": "CachePrice",
+    "estimator_completion_price_label": "CompletionPrice"
   },
   "gemini_cli_quota": {
     "title": "Gemini CLI Quota",

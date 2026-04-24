@@ -91,19 +91,21 @@ const useQuotaPagination = <T,>(items: T[], defaultPageSize = 6): QuotaPaginatio
   };
 };
 
-interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
-  config: QuotaConfig<TState, TData>;
+interface QuotaSectionProps<TState extends QuotaStatusState, TData, TRenderContext = undefined> {
+  config: QuotaConfig<TState, TData, TRenderContext>;
   files: AuthFileItem[];
   loading: boolean;
   disabled: boolean;
+  renderContext?: TRenderContext;
 }
 
-export function QuotaSection<TState extends QuotaStatusState, TData>({
+export function QuotaSection<TState extends QuotaStatusState, TData, TRenderContext = undefined>({
   config,
   files,
   loading,
-  disabled
-}: QuotaSectionProps<TState, TData>) {
+  disabled,
+  renderContext
+}: QuotaSectionProps<TState, TData, TRenderContext>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -319,6 +321,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                 defaultType={config.type}
                 canRefresh={!disabled && !item.disabled}
                 onRefresh={() => void refreshQuotaForFile(item)}
+                renderContext={renderContext}
                 renderQuotaItems={config.renderQuotaItems}
               />
             ))}

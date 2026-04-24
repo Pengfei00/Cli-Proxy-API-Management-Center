@@ -330,6 +330,7 @@ export interface CodexEstimatorAccountDetailPayload {
 export interface CodexQuotaEstimatorWindow {
   id: string;
   label: string;
+  usedPercent: number | null;
   remainingPercent: number | null;
   currentTokensTotal: number | null;
   estimatedCapacityTotal: number | null;
@@ -340,6 +341,36 @@ export interface CodexQuotaEstimatorWindow {
   lastExhaustionAt?: string;
   exhaustedPending: boolean;
   exhaustedConfirmed: boolean;
+}
+
+export interface CodexEstimatorCostModelLine {
+  model: string;
+  promptTokens: number;
+  cachedTokens: number;
+  completionTokens: number;
+  promptPrice: number;
+  cachePrice: number;
+  completionPrice: number;
+  promptCost: number;
+  cacheCost: number;
+  completionCost: number;
+  totalCost: number;
+}
+
+export interface CodexEstimatorFormulaBlock {
+  label: string;
+  expression: string;
+  result: string;
+}
+
+export interface CodexEstimatorCostWindow {
+  windowId: string;
+  modelLines: CodexEstimatorCostModelLine[];
+  missingPriceModels: string[];
+  usedAmountUsd: number;
+  usedPercent: number | null;
+  estimatedFullAmountUsd: number | null;
+  hasBillableData: boolean;
 }
 
 export interface CodexQuotaEstimatorState {

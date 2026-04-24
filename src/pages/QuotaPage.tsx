@@ -2,10 +2,10 @@
  * Quota management page - coordinates the three quota sections.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useAuthStore } from '@/stores';
+import { USAGE_STATS_STALE_TIME_MS, useAuthStore, useUsageStatsStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
 import {
   QuotaSection,
@@ -16,17 +16,28 @@ import {
   KIMI_CONFIG
 } from '@/components/quota';
 import type { AuthFileItem } from '@/types';
+import { loadModelPrices } from '@/utils/usage';
 import styles from './QuotaPage.module.scss';
 
 export function QuotaPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
+  const usageDetails = useUsageStatsStore((state) => state.usageDetails);
+  const loadUsageStats = useUsageStatsStore((state) => state.loadUsageStats);
 
   const [files, setFiles] = useState<AuthFileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [modelPrices, setModelPrices] = useState(() => loadModelPrices());
 
   const disableControls = connectionStatus !== 'connected';
+  const codexRenderContext = useMemo(
+    () => ({
+      usageDetails,
+      modelPrices
+    }),
+    [modelPrices, usageDetails]
+  );
 
   const loadConfig = useCallback(async () => {
     try {
@@ -52,15 +63,22 @@ export function QuotaPage() {
   }, [t]);
 
   const handleHeaderRefresh = useCallback(async () => {
-    await Promise.all([loadConfig(), loadFiles()]);
-  }, [loadConfig, loadFiles]);
+    setModelPrices(loadModelPrices());
+    await Promise.all([
+      loadConfig(),
+      loadFiles(),
+      loadUsageStats({ force: true, staleTimeMs: USAGE_STATS_STALE_TIME_MS }).catch(() => {})
+    ]);
+  }, [loadConfig, loadFiles, loadUsageStats]);
 
   useHeaderRefresh(handleHeaderRefresh);
 
   useEffect(() => {
     loadFiles();
     loadConfig();
-  }, [loadFiles, loadConfig]);
+    setModelPrices(loadModelPrices());
+    void loadUsageStats({ staleTimeMs: USAGE_STATS_STALE_TIME_MS }).catch(() => {});
+  }, [loadConfig, loadFiles, loadUsageStats]);
 
   return (
     <div className={styles.container}>
@@ -88,6 +106,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        renderContext={codexRenderContext}
       />
       <QuotaSection
         config={GEMINI_CLI_CONFIG}

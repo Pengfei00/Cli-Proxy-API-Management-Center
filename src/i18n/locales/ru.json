@@ -690,7 +690,21 @@
     "estimator_last_exhaustion": "Последнее исчерпание {{time}}",
     "estimator_retry_after": "Повтор после {{time}}",
     "estimator_exhausted_pending": "Ожидает подтверждения обновлением",
-    "estimator_exhausted_confirmed": "Исчерпание подтверждено"
+    "estimator_exhausted_confirmed": "Исчерпание подтверждено",
+    "estimator_calculation_formula": "Формулы расчёта",
+    "estimator_current_cycle_used_amount": "Стоимость текущего цикла",
+    "estimator_current_cycle_used_percent": "Доля текущего цикла",
+    "estimator_full_amount_estimate": "Оценка 100% лимита",
+    "estimator_model_cost_formula": "Формула по моделям",
+    "estimator_summary_formula": "Сводная формула",
+    "estimator_missing_price_models": "Для следующих моделей не задана цена, поэтому они исключены из оценки: {{models}}",
+    "estimator_no_billable_data": "Пока нет данных для денежной оценки этого цикла",
+    "estimator_prompt_tokens_label": "PromptTokens",
+    "estimator_cache_tokens_label": "CacheTokens",
+    "estimator_completion_tokens_label": "CompletionTokens",
+    "estimator_prompt_price_label": "PromptPrice",
+    "estimator_cache_price_label": "CachePrice",
+    "estimator_completion_price_label": "CompletionPrice"
   },
   "gemini_cli_quota": {
     "title": "Квота Gemini CLI",

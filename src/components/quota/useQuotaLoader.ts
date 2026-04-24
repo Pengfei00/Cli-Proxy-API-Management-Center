@@ -23,7 +23,9 @@ interface LoadQuotaResult<TData> {
   errorStatus?: number;
 }
 
-export function useQuotaLoader<TState, TData>(config: QuotaConfig<TState, TData>) {
+export function useQuotaLoader<TState, TData, TRenderContext = undefined>(
+  config: QuotaConfig<TState, TData, TRenderContext>
+) {
   const { t } = useTranslation();
   const quota = useQuotaStore(config.storeSelector);
   const setQuota = useQuotaStore((state) => state[config.storeSetter]) as QuotaSetter<

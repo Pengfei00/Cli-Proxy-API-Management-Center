@@ -16,6 +16,8 @@ import type {
   ClaudeQuotaWindow,
   ClaudeUsagePayload,
   CodexEstimatorAccountDetailPayload,
+  CodexEstimatorCostWindow,
+  CodexEstimatorFormulaBlock,
   CodexEstimatorCurrentCycleEstimate,
   CodexEstimatorExhaustionEvent,
   CodexRateLimitInfo,
@@ -86,13 +88,19 @@ import {
   isKimiFile,
   isRuntimeOnlyAuthFile,
 } from '@/utils/quota';
-import { normalizeAuthIndex } from '@/utils/usage';
+import { normalizeAuthIndex, type ModelPrice, type UsageDetail } from '@/utils/usage';
 import type { QuotaRenderHelpers } from './QuotaCard';
+import { buildCodexEstimatorCostWindow } from './codexEstimatorCost';
 import styles from '@/pages/QuotaPage.module.scss';
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
 
 type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi';
+
+type CodexQuotaRenderContext = {
+  usageDetails: UsageDetail[];
+  modelPrices: Record<string, ModelPrice>;
+};
 
 const DEFAULT_ANTIGRAVITY_PROJECT_ID = 'bamboo-precept-lgxtn';
 const QUOTA_PROGRESS_HIGH_THRESHOLD = 70;
@@ -117,7 +125,7 @@ export interface QuotaStore {
   clearQuotaCache: () => void;
 }
 
-export interface QuotaConfig<TState, TData> {
+export interface QuotaConfig<TState, TData, TRenderContext = undefined> {
   type: QuotaType;
   i18nPrefix: string;
   cardIdleMessageKey?: string;
@@ -132,7 +140,13 @@ export interface QuotaConfig<TState, TData> {
   controlsClassName: string;
   controlClassName: string;
   gridClassName: string;
-  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
+  renderQuotaItems: (
+    quota: TState,
+    t: TFunction,
+    helpers: QuotaRenderHelpers,
+    item: AuthFileItem,
+    renderContext: TRenderContext | undefined
+  ) => ReactNode;
 }
 
 const resolveAntigravityProjectId = async (file: AuthFileItem): Promise<string> => {
@@ -435,10 +449,7 @@ const normalizeCodexEstimatorTokenTotal = (
     normalizeNumberValue(summary.cache_read_tokens ?? summary.cacheReadTokens) ?? 0;
   const output =
     normalizeNumberValue(summary.output_tokens ?? summary.outputTokens) ?? 0;
-  const reasoning =
-    normalizeNumberValue(summary.reasoning_tokens ?? summary.reasoningTokens) ?? 0;
-
-  const inferred = read + cache + output + reasoning;
+  const inferred = read + cache + output;
   return inferred > 0 ? Math.round(inferred) : null;
 };
 
@@ -534,6 +545,7 @@ const normalizeCodexEstimatorWindow = (
   return {
     id,
     label: resolveCodexEstimatorWindowLabel(windowType ?? '', t),
+    usedPercent,
     remainingPercent,
     currentTokensTotal: currentTokens,
     estimatedCapacityTotal: estimatedCapacity,
@@ -1007,10 +1019,219 @@ const resolveCodexEstimatorConfidenceClass = (
   return styleMap.codexEstimatorPillLow;
 };
 
+const formatCodexEstimatorUsd = (
+  value: number | null,
+  minimumFractionDigits = 2,
+  maximumFractionDigits = 4
+): string => {
+  if (value === null || !Number.isFinite(value)) {
+    return '--';
+  }
+
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits,
+    maximumFractionDigits,
+  })}`;
+};
+
+const formatCodexEstimatorPercent = (value: number | null): string => {
+  if (value === null || !Number.isFinite(value)) {
+    return '--';
+  }
+
+  const hasFraction = Math.abs(value % 1) > 0.001;
+  return `${value.toLocaleString(undefined, {
+    minimumFractionDigits: hasFraction ? 1 : 0,
+    maximumFractionDigits: hasFraction ? 1 : 0,
+  })}%`;
+};
+
+const formatCodexEstimatorRate = (value: number): string =>
+  value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  });
+
+const buildCodexEstimatorModelFormulaBlocks = (
+  costWindow: CodexEstimatorCostWindow,
+  t: TFunction
+): CodexEstimatorFormulaBlock[] =>
+  costWindow.modelLines.map((line) => ({
+    label: line.model,
+    expression: `(${t('codex_quota.estimator_prompt_tokens_label')} / 1,000,000 × ${t('codex_quota.estimator_prompt_price_label')}) + (${t('codex_quota.estimator_cache_tokens_label')} / 1,000,000 × ${t('codex_quota.estimator_cache_price_label')}) + (${t('codex_quota.estimator_completion_tokens_label')} / 1,000,000 × ${t('codex_quota.estimator_completion_price_label')})`,
+    result: `= (${line.promptTokens.toLocaleString()} / 1,000,000 × ${formatCodexEstimatorRate(line.promptPrice)}) + (${line.cachedTokens.toLocaleString()} / 1,000,000 × ${formatCodexEstimatorRate(line.cachePrice)}) + (${line.completionTokens.toLocaleString()} / 1,000,000 × ${formatCodexEstimatorRate(line.completionPrice)}) = ${formatCodexEstimatorUsd(line.totalCost, 4, 4)}`,
+  }));
+
+const buildCodexEstimatorSummaryFormulaBlocks = (
+  costWindow: CodexEstimatorCostWindow,
+  t: TFunction
+): CodexEstimatorFormulaBlock[] => {
+  const blocks: CodexEstimatorFormulaBlock[] = [
+    {
+      label: t('codex_quota.estimator_current_cycle_used_amount'),
+      expression: `${t('codex_quota.estimator_current_cycle_used_amount')} = Σ ${t('codex_quota.estimator_model_cost_formula')}`,
+      result: costWindow.modelLines.length
+        ? `= ${costWindow.modelLines.map((line) => formatCodexEstimatorUsd(line.totalCost, 4, 4)).join(' + ')} = ${formatCodexEstimatorUsd(costWindow.usedAmountUsd, 4, 4)}`
+        : `= ${formatCodexEstimatorUsd(costWindow.usedAmountUsd, 4, 4)}`,
+    },
+    {
+      label: t('codex_quota.estimator_current_cycle_used_percent'),
+      expression: `${t('codex_quota.estimator_current_cycle_used_percent')} = usedPercent`,
+      result: `= ${formatCodexEstimatorPercent(costWindow.usedPercent)}`,
+    },
+  ];
+
+  if (costWindow.estimatedFullAmountUsd !== null && costWindow.usedPercent !== null) {
+    blocks.push({
+      label: t('codex_quota.estimator_full_amount_estimate'),
+      expression: `${t('codex_quota.estimator_full_amount_estimate')} ≈ ${t('codex_quota.estimator_current_cycle_used_amount')} / (${t('codex_quota.estimator_current_cycle_used_percent')} / 100)`,
+      result: `= ${formatCodexEstimatorUsd(costWindow.usedAmountUsd, 4, 4)} / (${formatCodexEstimatorPercent(costWindow.usedPercent)} / 100) = ${formatCodexEstimatorUsd(costWindow.estimatedFullAmountUsd, 4, 4)}`,
+    });
+  }
+
+  return blocks;
+};
+
+const renderCodexEstimatorFormulaGroup = (
+  title: string,
+  blocks: CodexEstimatorFormulaBlock[],
+  styleMap: typeof styles
+): ReactNode => {
+  const { createElement: h } = React;
+  if (blocks.length === 0) {
+    return null;
+  }
+
+  return h(
+    'div',
+    { className: styleMap.codexEstimatorFormulaGroup },
+    h('div', { className: styleMap.codexEstimatorFormulaTitle }, title),
+    h(
+      'div',
+      { className: styleMap.codexEstimatorFormulaList },
+      ...blocks.map((block) =>
+        h(
+          'div',
+          {
+            key: `${title}-${block.label}`,
+            className: styleMap.codexEstimatorFormulaItem,
+          },
+          h('div', { className: styleMap.codexEstimatorFormulaItemLabel }, block.label),
+          h('div', { className: styleMap.codexEstimatorFormulaExpression }, block.expression),
+          h('div', { className: styleMap.codexEstimatorFormulaResult }, block.result)
+        )
+      )
+    )
+  );
+};
+
+const renderCodexEstimatorCostSection = (
+  costWindow: CodexEstimatorCostWindow | null,
+  t: TFunction,
+  styleMap: typeof styles
+): ReactNode => {
+  const { createElement: h, Fragment } = React;
+  const modelFormulaBlocks = costWindow ? buildCodexEstimatorModelFormulaBlocks(costWindow, t) : [];
+  const summaryFormulaBlocks = costWindow
+    ? buildCodexEstimatorSummaryFormulaBlocks(costWindow, t)
+    : [];
+  const missingPriceModels = costWindow?.missingPriceModels ?? [];
+
+  return h(
+    'div',
+    { className: styleMap.codexEstimatorCostSection },
+    costWindow?.hasBillableData
+      ? h(
+          Fragment,
+          null,
+          h(
+            'div',
+            { className: styleMap.codexEstimatorCostMetrics },
+            h(
+              'div',
+              { className: styleMap.codexEstimatorCostMetric },
+              h(
+                'span',
+                { className: styleMap.codexEstimatorCostMetricLabel },
+                t('codex_quota.estimator_current_cycle_used_amount')
+              ),
+              h(
+                'span',
+                { className: styleMap.codexEstimatorCostMetricValue },
+                formatCodexEstimatorUsd(costWindow.usedAmountUsd)
+              )
+            ),
+            h(
+              'div',
+              { className: styleMap.codexEstimatorCostMetric },
+              h(
+                'span',
+                { className: styleMap.codexEstimatorCostMetricLabel },
+                t('codex_quota.estimator_current_cycle_used_percent')
+              ),
+              h(
+                'span',
+                { className: styleMap.codexEstimatorCostMetricValue },
+                formatCodexEstimatorPercent(costWindow.usedPercent)
+              )
+            ),
+            h(
+              'div',
+              { className: styleMap.codexEstimatorCostMetric },
+              h(
+                'span',
+                { className: styleMap.codexEstimatorCostMetricLabel },
+                t('codex_quota.estimator_full_amount_estimate')
+              ),
+              h(
+                'span',
+                { className: styleMap.codexEstimatorCostMetricValue },
+                formatCodexEstimatorUsd(costWindow.estimatedFullAmountUsd)
+              )
+            )
+          ),
+          h(
+            'div',
+            { className: styleMap.codexEstimatorFormulaSection },
+            h(
+              'div',
+              { className: styleMap.codexEstimatorFormulaTitle },
+              t('codex_quota.estimator_calculation_formula')
+            ),
+            renderCodexEstimatorFormulaGroup(
+              t('codex_quota.estimator_model_cost_formula'),
+              modelFormulaBlocks,
+              styleMap
+            ),
+            renderCodexEstimatorFormulaGroup(
+              t('codex_quota.estimator_summary_formula'),
+              summaryFormulaBlocks,
+              styleMap
+            )
+          )
+        )
+      : h(
+          'div',
+          { className: styleMap.codexEstimatorCostEmpty },
+          t('codex_quota.estimator_no_billable_data')
+        ),
+    missingPriceModels.length > 0
+      ? h(
+          'div',
+          { className: styleMap.quotaWarning },
+          t('codex_quota.estimator_missing_price_models', {
+            models: missingPriceModels.join(', '),
+          })
+        )
+      : null
+  );
+};
+
 const renderCodexEstimatorSection = (
   estimator: CodexQuotaEstimatorState,
   t: TFunction,
-  helpers: QuotaRenderHelpers
+  helpers: QuotaRenderHelpers,
+  costWindowsById: Map<string, CodexEstimatorCostWindow>
 ): ReactNode => {
   const { styles: styleMap, QuotaProgressBar } = helpers;
   const { createElement: h, Fragment } = React;
@@ -1048,6 +1269,7 @@ const renderCodexEstimatorSection = (
   const contentNodes: ReactNode[] =
     estimator.windows.length > 0
       ? estimator.windows.map((window) => {
+          const costWindow = costWindowsById.get(window.id) ?? null;
           const remainingLabel =
             window.remainingPercent === null
               ? t('codex_quota.estimator_remaining_unknown')
@@ -1170,7 +1392,8 @@ const renderCodexEstimatorSection = (
                     )
                   )
                 )
-              : null
+              : null,
+            renderCodexEstimatorCostSection(costWindow, t, styleMap)
           );
         })
       : [
@@ -1216,13 +1439,37 @@ const renderCodexEstimatorSection = (
 const renderCodexItems = (
   quota: CodexQuotaState,
   t: TFunction,
-  helpers: QuotaRenderHelpers
+  helpers: QuotaRenderHelpers,
+  item: AuthFileItem,
+  renderContext: CodexQuotaRenderContext | undefined
 ): ReactNode => {
   const { styles: styleMap, QuotaProgressBar } = helpers;
   const { createElement: h, Fragment } = React;
   const windows = quota.windows ?? [];
   const estimator = quota.estimator ?? null;
   const planType = quota.planType ?? estimator?.planType ?? null;
+  const rawAuthIndex = item['auth_index'] ?? item.authIndex;
+  const estimatorCostWindowsById =
+    estimator && renderContext
+      ? new Map(
+          estimator.windows
+            .map((window) => {
+              const costWindow = buildCodexEstimatorCostWindow({
+                authIndex: rawAuthIndex as string | number | null | undefined,
+                window,
+                usageDetails: renderContext.usageDetails,
+                modelPrices: renderContext.modelPrices,
+              });
+
+              return costWindow ? ([window.id, costWindow] as const) : null;
+            })
+            .filter(
+              (
+                entry
+              ): entry is readonly [string, CodexEstimatorCostWindow] => entry !== null
+            )
+        )
+      : new Map<string, CodexEstimatorCostWindow>();
 
   const getPlanLabel = (pt?: string | null): string | null => {
     const normalized = normalizePlanType(pt);
@@ -1297,7 +1544,7 @@ const renderCodexItems = (
   }
 
   if (estimator) {
-    nodes.push(renderCodexEstimatorSection(estimator, t, helpers));
+    nodes.push(renderCodexEstimatorSection(estimator, t, helpers, estimatorCostWindowsById));
   }
 
   return h(Fragment, null, ...nodes);
@@ -1661,7 +1908,8 @@ export const CODEX_CONFIG: QuotaConfig<
     planType: string | null;
     windows: CodexQuotaWindow[];
     estimator: CodexQuotaEstimatorState | null;
-  }
+  },
+  CodexQuotaRenderContext
 > = {
   type: 'codex',
   i18nPrefix: 'codex_quota',

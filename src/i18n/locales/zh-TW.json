@@ -693,7 +693,21 @@
     "estimator_last_exhaustion": "最近耗盡 {{time}}",
     "estimator_retry_after": "預計重試 {{time}}",
     "estimator_exhausted_pending": "等待刷新確認",
-    "estimator_exhausted_confirmed": "已確認耗盡"
+    "estimator_exhausted_confirmed": "已確認耗盡",
+    "estimator_calculation_formula": "計算公式",
+    "estimator_current_cycle_used_amount": "目前週期已用額度",
+    "estimator_current_cycle_used_percent": "目前週期占比",
+    "estimator_full_amount_estimate": "100% 額度估算",
+    "estimator_model_cost_formula": "模型成本公式",
+    "estimator_summary_formula": "彙總公式",
+    "estimator_missing_price_models": "以下模型未設定價格，未納入估算：{{models}}",
+    "estimator_no_billable_data": "暫無可估算花費資料",
+    "estimator_prompt_tokens_label": "PromptTokens",
+    "estimator_cache_tokens_label": "CacheTokens",
+    "estimator_completion_tokens_label": "CompletionTokens",
+    "estimator_prompt_price_label": "PromptPrice",
+    "estimator_cache_price_label": "CachePrice",
+    "estimator_completion_price_label": "CompletionPrice"
   },
   "gemini_cli_quota": {
     "title": "Gemini CLI 配額",
